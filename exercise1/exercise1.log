@@ -1,0 +1,41 @@
+TASK A:
+student@itk-d650-ubuntu:~/M1/exercise1$ time ./exercise1 A SLEEP
+real	0m1,002s
+user	0m0,002s
+sys	    0m0,000s
+
+student@itk-d650-ubuntu:~/M1/exercise1$ time ./exercise1 A USLEEP
+real	0m1,002s
+user	0m0,002s
+sys	    0m0,000s
+
+student@itk-d650-ubuntu:~/M1/exercise1$ time ./exercise1 A NANOSLEEP
+real	0m1,002s
+user	0m0,002s
+sys	    0m0,000s
+
+student@itk-d650-ubuntu:~/M1/exercise1$ time ./exercise1 A BUSY_CLOCK
+real	0m1,002s
+user	0m1,002s
+sys	    0m0,000s
+
+student@itk-d650-ubuntu:~/M1/exercise1$ time ./exercise1 A BUSY_TIMES
+real	0m1,002s
+user	0m0,301s
+sys	    0m0,700s
+
+TASK B latency:
+student@itk-d650-ubuntu:~/M1/exercise1$ ./exercise1 B LATENCY RDTSC
+8ns
+
+student@itk-d650-ubuntu:~/M1/exercise1$ ./exercise1 B LATENCY CLOCK
+22ns
+
+student@itk-d650-ubuntu:~/M1/exercise1$ ./exercise1 B LATENCY TIMES
+450ns
+
+TASK B resolution:
+    resolution check resolution_clock, resolution_rdtsc and resolution_times
+
+TASK C:
+    check sched_yield.pdf
