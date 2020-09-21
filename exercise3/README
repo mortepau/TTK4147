@@ -1,0 +1,36 @@
+# task A
+
+What happens?
+The global variable varies each time.
+
+# task B
+
+What was the problem?
+A data race.
+
+# task C
+without semaphore:
+real    0m0,194s
+user    0m0,374s
+sys     0m0,004s
+
+with semaphore:
+real    0m5,897s
+user    0m7,640s
+sys     0m4,107s
+
+Which one uses more system time, and why?
+The one using semaphore as it has to lock and unlock the global variable;
+
+Which one uses more user time, and why?
+The one using semaphore as it has to lock and unlock the global variable;
+
+Why is the real time used lower than the sum of the other two?
+Because we are using 2 threads.
+
+# task D
+
+The bug is that if we have executed the line allocation memory for the singleton, 
+and we get a context switch to a thread which hasn't executed the first if-statement
+we return an "empty" struct aka all 0 initialized. This has nothing to do with the semaphore
+as it isn't checked by the second thread.
