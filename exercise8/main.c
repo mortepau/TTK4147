@@ -1,0 +1,316 @@
+#include <native/task.h>
+#include <native/timer.h>
+#include <native/sem.h>
+#include <native/mutex.h>
+#include <sys/mman.h>
+#include <rtdk.h>
+
+#define BILLION 1000*1000*1000
+#define MILLION 1000*1000
+
+#define USE_MUTEX 1
+#define DEADLOCK 1
+
+RT_SEM barrier;
+
+#if DEADLOCK
+	RT_MUTEX mtx_a, mtx_b;
+
+	typedef struct mutex {
+		RT_MUTEX *mtx;
+		int priority;
+	} mutex_t;
+
+	mutex_t mutex_a, mutex_b;
+
+	typedef struct task {
+		RT_TASK *task;
+		int base;
+		int current;
+		int last;
+	} task_t;
+
+	task_t task_low, task_high;
+
+#else
+#if USE_MUTEX
+	RT_MUTEX mtx;
+#else
+	RT_SEM sem;
+#endif
+#endif
+
+SRTIME time_step;
+
+void busy_wait_us(unsigned long delay){
+	for(; delay > 0; delay--) {
+		rt_timer_spin(1000);
+	}
+}
+
+#if DEADLOCK
+
+void icpp_lock(mutex_t mutex, task_t *task) {
+	rt_task_set_priority(task->task, mutex.priority);
+	if (task->current < mutex.priority) {
+		task->last = task->current;
+		task->current = mutex.priority;
+	}
+	rt_mutex_acquire(mutex.mtx, TM_INFINITE);
+}
+
+void icpp_unlock(mutex_t mutex, task_t *task) {
+	rt_mutex_release(mutex.mtx);
+	rt_task_set_priority(task->task, task->base);
+	if (task->current == mutex.priority) {
+		task->current = task->last;
+		task->last = task->base;
+	}
+}
+
+void fn_low(void* args){
+
+	rt_printf("LOW: Waiting...\n");
+	rt_sem_p(&barrier, TM_INFINITE);
+
+	rt_printf("LOW: Start\n");
+
+	rt_printf("LOW: Priority (%i, %i)\n", task_low.base, task_low.current);
+
+	icpp_lock(mutex_a, &task_low); 
+	rt_printf("LOW: Resource A acquired\n");
+	rt_printf("LOW: Priority (%i, %i)\n", task_low.base, task_low.current);
+
+	busy_wait_us(3 * 1000);
+
+	rt_printf("LOW: Priority (%i, %i)\n", task_low.base, task_low.current);
+	icpp_lock(mutex_b, &task_low);
+	rt_printf("LOW: Resource B acquired\n");
+	rt_printf("LOW: Priority (%i, %i)\n", task_low.base, task_low.current);
+
+	rt_printf("LOW: Resource B released\n");
+	icpp_unlock(mutex_b, &task_low);
+	rt_printf("LOW: Priority (%i, %i)\n", task_low.base, task_low.current);
+
+	rt_printf("LOW: Resource A released\n");
+	icpp_unlock(mutex_a, &task_low);
+	rt_printf("LOW: Priority (%i, %i)\n", task_low.base, task_low.current);
+
+	busy_wait_us(1 * 1000);
+	rt_printf("LOW: Finished\n");
+}
+
+void fn_high(void* args){
+	rt_printf("HIGH: Waiting...\n");
+	rt_sem_p(&barrier, TM_INFINITE);
+
+	rt_printf("HIGH: Start\n");
+
+	rt_task_sleep(1 * time_step);
+
+	rt_printf("HIGH: Priority (%i, %i)\n", task_high.base, task_high.current);
+
+	icpp_lock(mutex_b, &task_high);
+	rt_printf("HIGH: Resource B acquired\n");
+	rt_printf("HIGH: Priority (%i, %i)\n", task_high.base, task_high.current);
+
+	busy_wait_us(1 * 1000);
+
+	rt_printf("HIGH: Priority (%i, %i)\n", task_high.base, task_high.current);
+
+	icpp_lock(mutex_a, &task_high); 
+	rt_printf("HIGH: Resource A acquired\n");
+	rt_printf("HIGH: Priority (%i, %i)\n", task_high.base, task_high.current);
+
+	busy_wait_us(2 * 1000);
+
+	rt_printf("HIGH: Resource A released\n");
+	icpp_unlock(mutex_a, &task_high);
+	rt_printf("HIGH: Priority (%i, %i)\n", task_high.base, task_high.current);
+
+	rt_printf("HIGH: Resource B released\n");
+	icpp_unlock(mutex_b, &task_high);
+	rt_printf("HIGH: Priority (%i, %i)\n", task_high.base, task_high.current);
+
+	busy_wait_us(1 * 1000);
+	rt_printf("HIGH: Finished\n");
+}
+
+#else
+
+void low(void* args){
+	rt_printf("LOW: Waiting...\n");
+    rt_sem_p(&barrier, TM_INFINITE);
+
+	RT_TASK *curtask;	
+	RT_TASK_INFO curtaskinfo;
+
+	curtask = rt_task_self();
+	rt_task_inquire(curtask, &curtaskinfo);
+
+	rt_printf("LOW: Start\n");
+	
+#if USE_MUTEX
+	rt_mutex_acquire(&mtx, TM_INFINITE);
+	rt_task_inquire(curtask, &curtaskinfo);
+	rt_printf("LOW: Base (%i), Current (%i)\n", curtaskinfo.bprio, curtaskinfo.cprio);
+#else
+	rt_sem_p(&sem, TM_INFINITE);
+#endif
+	rt_printf("LOW: Aquired resource\n");
+	busy_wait_us(3 * 1000);
+	rt_printf("LOW: Finished\n");
+#if USE_MUTEX
+	rt_mutex_release(&mtx);
+#else
+	rt_sem_v(&sem);
+#endif
+}
+
+void med(void* args){
+	rt_printf("MED: Waiting...\n");
+    rt_sem_p(&barrier, TM_INFINITE);
+
+	RT_TASK *curtask;	
+	RT_TASK_INFO curtaskinfo;
+
+	curtask = rt_task_self();
+	rt_task_inquire(curtask, &curtaskinfo);
+
+	rt_printf("MED: Start\n");
+	rt_task_sleep(1 * time_step);
+	rt_printf("MED: Sleep finished\n");
+	busy_wait_us(5 * 1000);
+	rt_printf("MED: Finished\n");
+}
+
+void high(void* args){
+	rt_printf("HIGH: Waiting...\n");
+    rt_sem_p(&barrier, TM_INFINITE);
+
+	RT_TASK *curtask;	
+	RT_TASK_INFO curtaskinfo;
+
+	curtask = rt_task_self();
+	rt_task_inquire(curtask, &curtaskinfo);
+
+	rt_printf("HIGH: Start\n");
+	rt_task_sleep(2 * time_step);
+	rt_printf("HIGH: Sleep finished\n");
+#if USE_MUTEX
+	rt_mutex_acquire(&mtx, TM_INFINITE);
+	rt_task_inquire(curtask, &curtaskinfo);
+	rt_printf("HIGH: Base (%i), Current (%i)\n", curtaskinfo.bprio, curtaskinfo.cprio);
+#else
+	rt_sem_p(&sem, TM_INFINITE);
+#endif
+	rt_printf("HIGH: Aquired resource\n");
+	busy_wait_us(2 * 1000);
+	rt_printf("HIGH: Finished\n");
+#if USE_MUTEX
+	rt_mutex_release(&mtx);
+#else
+	rt_sem_v(&sem);
+#endif
+}
+#endif
+
+void synchronize(void* args){
+	rt_printf("SYNCHRONIZE\n\r");
+	rt_timer_spin(100*MILLION);
+	rt_sem_broadcast(&barrier);
+	
+	rt_timer_spin(100*MILLION);
+	rt_sem_delete(&barrier);
+}
+
+int main(){
+#if DEADLOCK	
+    mlockall(MCL_CURRENT|MCL_FUTURE);
+
+    rt_print_auto_init(1);
+
+	time_step = rt_timer_ns2ticks(MILLION);
+
+    RT_TASK task_h;
+	RT_TASK task_l;
+	RT_TASK synchronizer;
+
+	task_low.task = &task_l;
+	task_high.task = &task_h;
+
+	rt_mutex_create(&mtx_a, "mutex A");
+	rt_mutex_create(&mtx_b, "mutex B");
+
+	mutex_a.mtx = &mtx_a;
+	mutex_a.priority = 10;
+
+	mutex_b.mtx = &mtx_b;
+	mutex_b.priority = 15;
+
+	rt_sem_create(&barrier, "barrier", 0, S_PRIO);
+
+	rt_task_create(&synchronizer, "SYNCHRONIZER", 0, 5, T_CPU(1));
+    rt_task_create(&task_l, "LOW", 0, 1, T_CPU(1));
+	task_low.current = 1;
+	task_low.base = 1;
+	task_low.last = 1;
+    rt_task_create(&task_h, "HIGH", 0, 3, T_CPU(1));
+	task_high.current = 3;
+	task_high.base = 3;
+	task_high.last = 3;
+
+	rt_task_start(&task_l, &fn_low, NULL);
+	rt_task_start(&task_h, &fn_high, NULL);
+
+	busy_wait_us(100);
+
+	rt_task_start(&synchronizer, &synchronize, NULL);
+
+	while(1);
+
+	rt_mutex_delete(&mtx_a);
+	rt_mutex_delete(&mtx_b);
+
+	return 0;
+#else
+
+    mlockall(MCL_CURRENT|MCL_FUTURE);
+
+    rt_print_auto_init(1);
+
+	time_step = rt_timer_ns2ticks(MILLION);
+
+    RT_TASK tasks[3];
+	RT_TASK synchronizer;
+
+#if USE_MUTEX
+	rt_mutex_create(&mtx, "mutex");
+#else
+	rt_sem_create(&sem, "sem", 1, S_PRIO);
+#endif
+	rt_sem_create(&barrier, "barrier", 0, S_PRIO);
+	
+	rt_task_create(&synchronizer, "SYNCHRONIZER", 0, 5, T_CPU(1));
+    rt_task_create(&tasks[0], "LOW", 0, 1, T_CPU(1));
+    rt_task_create(&tasks[1], "MED", 0, 2, T_CPU(1));
+    rt_task_create(&tasks[2], "HIGH", 0, 3, T_CPU(1));
+
+	rt_task_start(&tasks[0], &low, NULL);
+	rt_task_start(&tasks[1], &med, NULL);
+	rt_task_start(&tasks[2], &high, NULL);
+
+	busy_wait_us(100);
+
+	rt_task_start(&synchronizer, &synchronize, NULL);
+
+	while(1);
+
+#if USE_MUTEX
+	rt_mutex_delete(&mtx);
+#else
+	rt_sem_delete(&sem);
+#endif
+    return 0;
+#endif
+}
